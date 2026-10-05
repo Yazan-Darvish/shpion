@@ -1,5 +1,5 @@
 // Service worker «Шпиона»: кэширует всю игру, стратегия cache-first.
-const CACHE_VERSION = 'shpion-v1';
+const CACHE_VERSION = 'shpion-v2';
 const ASSETS = [
   './',
   './index.html',

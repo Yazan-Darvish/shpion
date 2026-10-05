@@ -5,7 +5,7 @@
   const STORE_KEY = 'shpion.v1';
   const MIN_PLAYERS = 3;
   const MAX_PLAYERS = 12;
-  const TWO_SPIES_FROM = 6;
+  const TWO_SPIES_FROM = 5;
   const MIN_MINUTES = 3;
   const MAX_MINUTES = 15;
   const NAME_MAX = 16;
@@ -39,7 +39,8 @@
     minutes: clamp(parseInt(saved.minutes, 10) || 8, MIN_MINUTES, MAX_MINUTES),
     names: Array.isArray(saved.names)
       ? saved.names.slice(0, MAX_PLAYERS).map((n) => String(n == null ? '' : n).slice(0, NAME_MAX))
-      : []
+      : [],
+    music: saved.music !== false
   };
   let lastLocation = typeof saved.lastLocation === 'string' ? saved.lastLocation : null;
   normalizeSpies();
@@ -54,6 +55,7 @@
       spies: settings.spies,
       minutes: settings.minutes,
       names: settings.names,
+      music: settings.music,
       lastLocation
     });
   }
@@ -119,8 +121,8 @@
     window.scrollTo(0, 0);
   }
 
-  function screen(bodyClass, body, bar) {
-    return h('section', { class: 'screen' },
+  function screen(bodyClass, body, bar, fit) {
+    return h('section', { class: fit ? 'screen screen--fit' : 'screen' },
       h('div', { class: `screen__body ${bodyClass || ''}`.trim() }, body),
       bar ? h('div', { class: 'bar' }, bar) : null
     );
@@ -246,7 +248,7 @@
       normalizeSpies();
       spyBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(settings.spies === i + 1)));
       spyBtns[1].disabled = settings.players < TWO_SPIES_FROM;
-      spyHint.textContent = settings.players < TWO_SPIES_FROM ? 'Второй — от 6 игроков' : 'Шпионы не знают друг друга';
+      spyHint.textContent = settings.players < TWO_SPIES_FROM ? `Второй — от ${TWO_SPIES_FROM} игроков` : 'Шпионы не знают друг друга';
     };
     spyBtns.forEach((b, i) => b.addEventListener('click', () => {
       settings.spies = i + 1;
@@ -319,7 +321,7 @@
 
     const body = [
       h('div', { class: 'topbar' }, cancel),
-      h('div', { class: 'screen__body screen__body--center pass' },
+      h('div', { class: 'pass' },
         h('p', { class: 'kicker', text: 'Передай телефон' }),
         h('h1', { class: 'title pass__name', text: p.name }),
         h('p', { class: 'pass__count', text: `Карта ${game.index + 1} из ${total}` }),
@@ -335,7 +337,7 @@
     const show = h('button', { type: 'button', class: 'btn btn--primary', text: `Я ${p.name} · показать карту` });
     show.addEventListener('click', renderCard);
 
-    mount(screen('', body, show));
+    mount(screen('', body, show, true));
   }
 
   // ===== Экран 3: карта игрока =====
@@ -365,10 +367,10 @@
           h('div', { class: 'card__stamp-row' }, h('span', { class: 'stamp', text: 'Никому не показывать' }))
         );
 
-    const body = h('div', { class: 'screen__body screen__body--center' },
+    const body = [
       h('p', { class: 'kicker', text: `Карта ${game.index + 1} из ${game.players.length}` }),
       card
-    );
+    ];
 
     const hide = h('button', {
       type: 'button',
@@ -382,7 +384,7 @@
       else renderRound();
     });
 
-    mount(screen('', body, hide));
+    mount(screen('screen__body--center', body, hide, true));
   }
 
   // ===== Экран 4: раунд =====
@@ -423,6 +425,8 @@
     try {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
+      // iOS 17+: иначе Web Audio молчит при включённом беззвучном режиме
+      if (navigator.audioSession) navigator.audioSession.type = 'playback';
       if (!audioCtx) audioCtx = new AC();
       if (audioCtx.state === 'suspended') audioCtx.resume();
       // Тихий звук в момент нажатия «разблокирует» звук на iOS
@@ -455,11 +459,165 @@
     } catch (e) { /* без звука */ }
   }
 
+  // Safari на iPhone не поддерживает navigator.vibrate, но с iOS 18 переключатель
+  // <input type="checkbox" switch> даёт короткий тактильный щелчок — используем его как запасной вариант.
+  let hapticLabel = null;
+  function hapticTap() {
+    try {
+      if (!hapticLabel) {
+        const input = h('input', { type: 'checkbox', switch: true, tabindex: '-1' });
+        hapticLabel = h('label', { class: 'visually-hidden', 'aria-hidden': 'true' }, input);
+        document.body.append(hapticLabel);
+      }
+      hapticLabel.click();
+    } catch (e) { /* без отклика */ }
+  }
+
   function vibrate() {
     try {
-      if (navigator.vibrate) navigator.vibrate([200, 120, 200, 120, 200]);
+      if (navigator.vibrate) {
+        navigator.vibrate([500, 150, 500, 150, 500, 150, 900]);
+        return;
+      }
     } catch (e) { /* без вибрации */ }
+    for (let i = 0; i < 8; i++) setTimeout(hapticTap, i * 140);
   }
+
+  // ===== Фоновая музыка раунда (генерируется Web Audio, без файлов) =====
+  // Тихий «шпионский» грув: ползущий хроматический бас, хай-хэт, щелчки и редкие ноты.
+  // В последнюю минуту темп растёт.
+  const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
+  const BASS = [40, 40, 41, 41, 42, 42, 41, 41, 40, 40, 41, 41, 42, 42, 43, 42,
+                43, 43, 44, 44, 45, 45, 44, 44, 40, 40, 41, 41, 42, 43, 42, 41]; // восьмые
+  const LEAD = { 14: 71, 30: 74, 46: 72, 52: 71, 60: 67, 62: 66 }; // шестнадцатые → нота
+  const music = {
+    playing: false, master: null, timerId: null, nextTime: 0, step: 0, noise: null,
+
+    start() {
+      if (!settings.music || this.playing) return;
+      unlockAudio();
+      if (!audioCtx) return;
+      try {
+        const now = audioCtx.currentTime;
+        this.master = audioCtx.createGain();
+        this.master.gain.setValueAtTime(0.0001, now);
+        this.master.gain.exponentialRampToValueAtTime(0.55, now + 0.8);
+        this.master.connect(audioCtx.destination);
+        if (!this.noise) {
+          const len = audioCtx.sampleRate * 0.1;
+          this.noise = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+          const d = this.noise.getChannelData(0);
+          for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+        }
+        this.step = 0;
+        this.nextTime = now + 0.1;
+        this.playing = true;
+        this.schedule();
+        this.timerId = setInterval(() => this.schedule(), 200);
+      } catch (e) { this.playing = false; }
+    },
+
+    stop() {
+      if (!this.playing) return;
+      this.playing = false;
+      clearInterval(this.timerId);
+      const g = this.master;
+      this.master = null;
+      try {
+        const now = audioCtx.currentTime;
+        g.gain.cancelScheduledValues(now);
+        g.gain.setValueAtTime(g.gain.value, now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+        setTimeout(() => g.disconnect(), 400);
+      } catch (e) { /* уже остановлено */ }
+    },
+
+    schedule() {
+      if (!this.playing || !audioCtx) return;
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const now = audioCtx.currentTime;
+      if (this.nextTime < now) this.nextTime = now + 0.05; // догоняем после фона
+      const tense = game && remainingMs() < 60000;
+      const stepDur = 60 / (tense ? 132 : 108) / 4;
+      while (this.nextTime < now + 0.8) {
+        this.playStep(this.step, this.nextTime, stepDur);
+        this.nextTime += stepDur;
+        this.step = (this.step + 1) % 64;
+      }
+    },
+
+    playStep(step, t, dur) {
+      const out = this.master;
+      if (step % 2 === 0) this.bass(midi(BASS[step / 2]), t, dur * 1.8, out);
+      if (step % 4 === 2) this.hat(t, 0.05, out);
+      if (step % 8 === 4) this.click(t, out);
+      if (LEAD[step]) this.lead(midi(LEAD[step]), t, dur * 3, out);
+    },
+
+    bass(freq, t, len, out) {
+      const osc = audioCtx.createOscillator();
+      const filter = audioCtx.createBiquadFilter();
+      const g = audioCtx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(900, t);
+      filter.frequency.exponentialRampToValueAtTime(220, t + len);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.32, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      osc.connect(filter).connect(g).connect(out);
+      osc.start(t);
+      osc.stop(t + len + 0.05);
+    },
+
+    hat(t, vol, out) {
+      const src = audioCtx.createBufferSource();
+      const filter = audioCtx.createBiquadFilter();
+      const g = audioCtx.createGain();
+      src.buffer = this.noise;
+      filter.type = 'highpass';
+      filter.frequency.value = 7000;
+      g.gain.setValueAtTime(vol, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+      src.connect(filter).connect(g).connect(out);
+      src.start(t);
+      src.stop(t + 0.06);
+    },
+
+    click(t, out) {
+      const osc = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(1800, t);
+      osc.frequency.exponentialRampToValueAtTime(600, t + 0.03);
+      g.gain.setValueAtTime(0.12, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+      osc.connect(g).connect(out);
+      osc.start(t);
+      osc.stop(t + 0.05);
+    },
+
+    lead(freq, t, len, out) {
+      const osc = audioCtx.createOscillator();
+      const vib = audioCtx.createOscillator();
+      const vibGain = audioCtx.createGain();
+      const g = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      vib.frequency.value = 5.5;
+      vibGain.gain.value = freq * 0.006;
+      vib.connect(vibGain).connect(osc.frequency);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.13, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      osc.connect(g).connect(out);
+      osc.start(t);
+      vib.start(t);
+      osc.stop(t + len + 0.05);
+      vib.stop(t + len + 0.05);
+    }
+  };
 
   function startTicking() {
     stopTicking();
@@ -473,6 +631,7 @@
 
   function stopRound() {
     stopTicking();
+    music.stop();
     releaseWakeLock();
     roundUI = null;
   }
@@ -485,6 +644,7 @@
       t.remaining = 0;
       stopTicking();
       releaseWakeLock();
+      music.stop();
       beepThreeTimes();
       vibrate();
     }
@@ -499,11 +659,13 @@
       t.status = 'running';
       requestWakeLock();
       startTicking();
+      music.start();
     } else if (t.status === 'running') {
       t.remaining = remainingMs();
       t.status = 'paused';
       stopTicking();
       releaseWakeLock();
+      music.stop();
     }
     tick();
   }
@@ -551,7 +713,22 @@
       return h('li', null, btn);
     }));
 
+    const musicBtn = h('button', { type: 'button', class: 'btn btn--ghost music-btn' });
+    const syncMusicBtn = () => {
+      musicBtn.textContent = settings.music ? '♪ Музыка: вкл' : '♪ Музыка: выкл';
+      musicBtn.setAttribute('aria-pressed', String(settings.music));
+    };
+    musicBtn.addEventListener('click', () => {
+      settings.music = !settings.music;
+      persist();
+      syncMusicBtn();
+      if (!settings.music) music.stop();
+      else if (game.timer.status === 'running') music.start();
+    });
+    syncMusicBtn();
+
     const body = [
+      h('div', { class: 'topbar topbar--end' }, musicBtn),
       box,
       h('p', { class: 'first' }, h('span', { class: 'kicker', text: 'Первым спрашивает' }), h('br'), h('strong', { text: game.firstAsker })),
       h('div', { class: 'loc-head' },
@@ -567,7 +744,7 @@
     mount(screen('', body, [revealBtn, timerBtn]));
     roundUI = { box, time, status, timerBtn, revealBtn };
     updateTimerUI();
-    if (game.timer.status === 'running') { startTicking(); requestWakeLock(); }
+    if (game.timer.status === 'running') { startTicking(); requestWakeLock(); music.start(); }
   }
 
   document.addEventListener('visibilitychange', () => {

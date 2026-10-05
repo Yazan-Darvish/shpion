@@ -122,6 +122,12 @@ button { cursor: pointer; touch-action: manipulation; }
 .screen__body { flex: 1 0 auto; display: flex; flex-direction: column; gap: 20px; padding-bottom: 20px; }
 .screen__body--center { justify-content: center; }
 
+/* Экраны передачи и карты помещаются в высоту телефона — без прокрутки */
+.screen--fit { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+.screen--fit .screen__body { flex: 1 1 auto; min-height: 0; gap: 14px; padding-bottom: 4px; overflow: hidden; }
+.screen--fit .bar { position: static; padding-top: 10px; }
+html:has(.screen--fit), html:has(.screen--fit) body { overflow: hidden; overscroll-behavior: none; }
+
 @keyframes screen-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* Нижняя панель действия — под большим пальцем */
@@ -292,9 +298,13 @@ button { cursor: pointer; touch-action: manipulation; }
 @keyframes pulse { 50% { filter: brightness(1.15); } }
 
 .topbar { display: flex; justify-content: space-between; align-items: center; min-height: 44px; margin-top: -8px; }
+.topbar--end { justify-content: flex-end; margin-bottom: -12px; }
+.music-btn { min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; }
+.music-btn[aria-pressed="false"] { opacity: 0.6; }
 
 /* ===== Передача телефона ===== */
-.pass { text-align: center; align-items: center; }
+.pass { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px; text-align: center; }
+.pass > * { margin: 0; }
 .pass__name { font-size: clamp(44px, 14vw, 64px); max-width: 100%; }
 .pass__count { font-family: var(--font-mono); color: var(--muted); letter-spacing: 0.08em; }
 
@@ -407,6 +417,26 @@ button { cursor: pointer; touch-action: manipulation; }
 .roster__role { color: var(--muted); text-align: right; overflow-wrap: anywhere; }
 .roster li.is-spy { background: var(--accent-soft); padding: 12px 10px; margin: 0 -6px; border-radius: 10px; }
 .roster li.is-spy .roster__role { color: var(--accent-text); font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+
+/* Невысокие экраны (iPhone SE, mini, открытая клавиатура браузера) */
+@media (max-height: 720px) {
+  .screen { padding-top: calc(env(safe-area-inset-top) + 12px); }
+  .screen--fit .screen__body { gap: 10px; }
+  .pass__name { font-size: clamp(36px, 11vw, 48px); }
+  .card { margin-top: 18px; padding: 18px 16px 16px; }
+  .card__sheet { margin-top: 10px; padding: 12px 12px; }
+  .card__value { font-size: 28px; margin-bottom: 8px; }
+  .card__value--role { font-size: 22px; }
+  .card--spy .card__value { font-size: 38px; }
+  .card--spy .card__hint { font-size: 15px; }
+  .card .stamp { margin-top: 10px; }
+  .card--closed { min-height: 150px; }
+  .card--closed .card__center { padding: 8px 0 2px; }
+}
+@media (max-height: 600px) {
+  .dots { display: none; }
+  .card--closed { min-height: 120px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
