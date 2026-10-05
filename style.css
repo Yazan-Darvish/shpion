@@ -329,7 +329,25 @@ html:has(.screen--fit), html:has(.screen--fit) body { overflow: hidden; overscro
 @keyframes pulse { 50% { filter: brightness(1.15); } }
 
 .topbar { display: flex; justify-content: space-between; align-items: center; min-height: 44px; margin-top: -8px; }
-.topbar--end { justify-content: flex-end; margin-bottom: -12px; }
+.topbar--end { justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-bottom: -12px; }
+
+/* Переключатель */
+.switch {
+  position: relative; flex-shrink: 0;
+  width: 72px; height: 44px; margin: 6px 0;
+  border-radius: 999px; border: 1px solid var(--line-strong);
+  background: var(--surface-2);
+  transition: background-color 0.2s, border-color 0.2s;
+}
+.switch::after {
+  content: ""; position: absolute; top: 4px; left: 4px;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.2s, background-color 0.2s;
+}
+.switch[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+.switch[aria-pressed="true"]::after { transform: translateX(28px); background: var(--accent-ink); }
+.switch::before { content: ""; position: absolute; inset: -6px; } /* зона нажатия 56px */
 .music-btn { min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; }
 .music-btn[aria-pressed="false"] { opacity: 0.6; }
 

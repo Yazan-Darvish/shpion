@@ -43,6 +43,7 @@
       ? saved.names.slice(0, MAX_PLAYERS).map((n) => String(n == null ? '' : n).slice(0, NAME_MAX))
       : [],
     music: saved.music !== false,
+    keepAwake: saved.keepAwake === true,
     // Пустой список — «Все локации» (без тем 18+)
     themes: Array.isArray(saved.themes) ? THEMES.filter((t) => saved.themes.includes(t.id)).map((t) => t.id) : []
   };
@@ -60,6 +61,7 @@
       minutes: settings.minutes,
       names: settings.names,
       music: settings.music,
+      keepAwake: settings.keepAwake,
       themes: settings.themes,
       lastLocation
     });
@@ -209,6 +211,25 @@
     };
   }
 
+  const WAKE_SUPPORTED = 'wakeLock' in navigator;
+
+  function keepAwakeToggle(kind) {
+    const btn = h('button', { type: 'button', class: kind === 'pill' ? 'btn btn--ghost music-btn' : 'switch' });
+    const sync = () => {
+      btn.setAttribute('aria-pressed', String(settings.keepAwake));
+      if (kind === 'pill') btn.textContent = settings.keepAwake ? '☀ Экран: не гаснет' : '☀ Экран: гаснет';
+      else btn.setAttribute('aria-label', 'Не гасить экран');
+    };
+    btn.addEventListener('click', () => {
+      settings.keepAwake = !settings.keepAwake;
+      persist();
+      sync();
+      syncWakeLock();
+    });
+    sync();
+    return btn;
+  }
+
   // ===== Экран 1: настройки =====
   function stepper(label, hint, get, min, max, onChange) {
     const value = h('span', { class: 'stepper__value', 'aria-live': 'polite' });
@@ -349,7 +370,14 @@
         stepper('Минут на раунд', null, () => settings.minutes, MIN_MINUTES, MAX_MINUTES, (v) => {
           settings.minutes = v;
           persist();
-        })
+        }),
+        h('div', { class: 'row' },
+          h('span', { class: 'row__label' }, 'Не гасить экран',
+            h('span', { class: 'row__hint', text: WAKE_SUPPORTED
+              ? 'Всю игру, а не только во время таймера'
+              : 'Этот браузер не умеет держать экран включённым' })),
+          keepAwakeToggle('switch')
+        )
       ),
       h('h2', { class: 'kicker section-title', text: 'Имена · необязательно' }),
       names,
@@ -473,11 +501,20 @@
     return t.status === 'running' ? Math.max(0, t.endAt - Date.now()) : t.remaining;
   }
 
+  // Экран держим включённым, если это включено в настройках или пока идёт таймер раунда
+  function wantWakeLock() {
+    return settings.keepAwake || Boolean(game && roundUI && game.timer.status === 'running');
+  }
+
+  function syncWakeLock() {
+    if (wantWakeLock()) requestWakeLock(); else releaseWakeLock();
+  }
+
   async function requestWakeLock() {
     try {
       if (!('wakeLock' in navigator) || wakeLock || document.visibilityState !== 'visible') return;
       const lock = await navigator.wakeLock.request('screen');
-      if (!game || game.timer.status !== 'running') { lock.release().catch(() => {}); return; }
+      if (!wantWakeLock() || wakeLock) { lock.release().catch(() => {}); return; }
       wakeLock = lock;
       lock.addEventListener('release', () => { if (wakeLock === lock) wakeLock = null; });
     } catch (e) { /* отказ — не страшно */ }
@@ -699,8 +736,8 @@
   function stopRound() {
     stopTicking();
     music.stop();
-    releaseWakeLock();
     roundUI = null;
+    syncWakeLock();
   }
 
   function tick() {
@@ -710,7 +747,7 @@
       t.status = 'done';
       t.remaining = 0;
       stopTicking();
-      releaseWakeLock();
+      syncWakeLock();
       music.stop();
       beepThreeTimes();
       vibrate();
@@ -731,7 +768,7 @@
       t.remaining = remainingMs();
       t.status = 'paused';
       stopTicking();
-      releaseWakeLock();
+      syncWakeLock();
       music.stop();
     }
     tick();
@@ -795,7 +832,7 @@
     syncMusicBtn();
 
     const body = [
-      h('div', { class: 'topbar topbar--end' }, musicBtn),
+      h('div', { class: 'topbar topbar--end' }, WAKE_SUPPORTED ? keepAwakeToggle('pill') : null, musicBtn),
       box,
       h('p', { class: 'first' }, h('span', { class: 'kicker', text: 'Первым спрашивает' }), h('br'), h('strong', { text: game.firstAsker })),
       h('div', { class: 'loc-head' },
@@ -811,13 +848,18 @@
     mount(screen('', body, [revealBtn, timerBtn]));
     roundUI = { box, time, status, timerBtn, revealBtn };
     updateTimerUI();
-    if (game.timer.status === 'running') { startTicking(); requestWakeLock(); music.start(); }
+    if (game.timer.status === 'running') { startTicking(); music.start(); }
+    syncWakeLock();
   }
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible' || !game || !roundUI) return;
     tick();
-    if (game.timer.status === 'running') requestWakeLock();
+  });
+
+  // Браузер снимает блокировку, когда вкладка уходит в фон, — возвращаем её
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncWakeLock();
   });
 
   // ===== Экран 5: итоги =====
@@ -843,6 +885,7 @@
 
   // ===== Старт =====
   renderSettings();
+  syncWakeLock();
 
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
     window.addEventListener('load', () => {
