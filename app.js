@@ -211,6 +211,104 @@
     };
   }
 
+  // ===== Обновления =====
+  // Service worker отдаёт игру из кэша. Новая версия скачивается в фоне и включается
+  // после перезагрузки страницы — кнопка и баннер в настройках делают это явно.
+  const SW_ENABLED = 'serviceWorker' in navigator &&
+    (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+  const hadController = SW_ENABLED && Boolean(navigator.serviceWorker.controller);
+  let updateReady = false;
+  const updateListeners = new Set();
+
+  function markUpdateReady() {
+    if (updateReady) return;
+    updateReady = true;
+    updateListeners.forEach((fn) => fn());
+  }
+
+  function waitForActivation(worker) {
+    return new Promise((resolve) => {
+      if (worker.state === 'activated') return resolve(true);
+      const done = () => {
+        if (worker.state === 'activated') resolve(true);
+        else if (worker.state === 'redundant') resolve(false);
+      };
+      worker.addEventListener('statechange', done);
+      setTimeout(() => resolve(worker.state === 'activated'), 20000);
+    });
+  }
+
+  // 'ready' — новая версия скачана, 'latest' — обновлений нет, 'offline' — нет сети
+  async function checkForUpdates() {
+    if (!SW_ENABLED) return 'ready'; // без service worker просто перезагрузим страницу
+    if (updateReady) return 'ready';
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) return 'ready';
+      await reg.update();
+      const worker = reg.installing || reg.waiting;
+      if (!worker) return 'latest';
+      const ok = await waitForActivation(worker);
+      if (ok) markUpdateReady();
+      return ok ? 'ready' : 'offline';
+    } catch (e) {
+      return 'offline';
+    }
+  }
+
+  async function currentVersion() {
+    try {
+      const keys = await caches.keys();
+      const nums = keys.map((k) => (/^shpion-v(\d+)$/.exec(k) || [])[1]).filter(Boolean).map(Number);
+      return nums.length ? Math.max(...nums) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function updateBlock() {
+    const btn = h('button', { type: 'button', class: 'btn', text: '⟳ Проверить обновления' });
+    const status = h('p', { class: 'update__status', 'aria-live': 'polite' });
+    let busy = false;
+    const showReady = () => {
+      btn.textContent = 'Обновить сейчас';
+      btn.className = 'btn btn--primary';
+      status.textContent = 'Новая версия скачана';
+    };
+    btn.addEventListener('click', async () => {
+      if (updateReady || !SW_ENABLED) { location.reload(); return; }
+      if (busy) return;
+      busy = true;
+      btn.textContent = 'Проверяю…';
+      status.textContent = '';
+      const result = await checkForUpdates();
+      busy = false;
+      if (!btn.isConnected) return;
+      if (result === 'ready') { showReady(); return; }
+      btn.textContent = '⟳ Проверить обновления';
+      status.textContent = result === 'latest' ? 'У тебя последняя версия' : 'Не получилось проверить — нет интернета?';
+    });
+    if (updateReady) showReady();
+    else {
+      currentVersion().then((v) => {
+        if (v && !updateReady && !status.textContent) status.textContent = `Версия ${v}`;
+      });
+    }
+    updateListeners.add(() => { if (btn.isConnected && !busy) showReady(); });
+    return h('div', { class: 'update' }, btn, status);
+  }
+
+  function updateBanner() {
+    const banner = h('div', { class: 'update-banner', role: 'status' },
+      h('span', { text: 'Вышла новая версия игры' }));
+    const btn = h('button', { type: 'button', class: 'btn btn--primary update-banner__btn', text: 'Обновить' });
+    btn.addEventListener('click', () => location.reload());
+    banner.append(btn);
+    banner.hidden = !updateReady;
+    updateListeners.add(() => { banner.hidden = false; });
+    return banner;
+  }
+
   const WAKE_SUPPORTED = 'wakeLock' in navigator;
 
   function keepAwakeToggle(kind) {
@@ -343,6 +441,7 @@
     syncThemes();
 
     const body = [
+      updateBanner(),
       h('header', { class: 'masthead' },
         h('div', { class: 'masthead__file' },
           h('span', { text: 'Дело № 07' }), h('span', { text: 'Для служебного пользования' })),
@@ -390,7 +489,8 @@
           h('li', { text: 'Шпион может в любой момент раскрыться и назвать локацию: угадал — он победил.' }),
           h('li', { text: 'Когда время выйдет (или раньше), голосуйте, кто шпион. Поймали — победа мирных, ошиблись — победа шпиона.' })
         )
-      )
+      ),
+      updateBlock()
     ];
 
     const start = h('button', { type: 'button', class: 'btn btn--primary', text: 'Раздать карты' });
@@ -887,7 +987,11 @@
   renderSettings();
   syncWakeLock();
 
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  if (SW_ENABLED) {
+    // Новый service worker сразу берёт управление (skipWaiting) — значит, вышла новая версия
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) markUpdateReady();
+    });
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('./sw.js').catch(() => {});
     });
