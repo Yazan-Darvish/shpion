@@ -552,12 +552,18 @@
   }
 
   // ===== Фоновая музыка раунда (генерируется Web Audio, без файлов) =====
-  // Тихий «шпионский» грув: ползущий хроматический бас, хай-хэт, щелчки и редкие ноты.
+  // «Нуар-джаз»: шагающий контрабас, мягкие аккорды, щётки со свингом и приглушённая труба.
   // В последнюю минуту темп растёт.
   const midi = (n) => 440 * Math.pow(2, (n - 69) / 12);
-  const BASS = [40, 40, 41, 41, 42, 42, 41, 41, 40, 40, 41, 41, 42, 42, 43, 42,
-                43, 43, 44, 44, 45, 45, 44, 44, 40, 40, 41, 41, 42, 43, 42, 41]; // восьмые
-  const LEAD = { 14: 71, 30: 74, 46: 72, 52: 71, 60: 67, 62: 66 }; // шестнадцатые → нота
+  const NOIR = {
+    bpm: 96,
+    tenseBpm: 118,
+    steps: 32, // восьмые, 4 такта
+    bass: [38, 41, 45, 48, 34, 38, 41, 45, 40, 43, 46, 49, 33, 37, 40, 43], // четверти: Dm · B♭ · Em7♭5 · A7
+    chords: [[62, 65, 69, 72], [58, 62, 65, 69], [64, 67, 70, 74], [61, 64, 67, 69]],
+    horn: { 2: 69, 3: 70, 4: 69, 10: 65, 12: 62, 18: 69, 19: 72, 20: 70, 26: 69, 28: 61 }
+  };
+
   const music = {
     playing: false, master: null, timerId: null, nextTime: 0, step: 0, noise: null,
 
@@ -569,10 +575,10 @@
         const now = audioCtx.currentTime;
         this.master = audioCtx.createGain();
         this.master.gain.setValueAtTime(0.0001, now);
-        this.master.gain.exponentialRampToValueAtTime(0.55, now + 0.8);
+        this.master.gain.exponentialRampToValueAtTime(0.6, now + 0.8);
         this.master.connect(audioCtx.destination);
         if (!this.noise) {
-          const len = audioCtx.sampleRate * 0.1;
+          const len = Math.floor(audioCtx.sampleRate * 0.3);
           this.noise = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
           const d = this.noise.getChannelData(0);
           for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
@@ -606,84 +612,77 @@
       const now = audioCtx.currentTime;
       if (this.nextTime < now) this.nextTime = now + 0.05; // догоняем после фона
       const tense = game && remainingMs() < 60000;
-      const stepDur = 60 / (tense ? 132 : 108) / 4;
+      const stepDur = 60 / (tense ? NOIR.tenseBpm : NOIR.bpm) / 2;
       while (this.nextTime < now + 0.8) {
-        this.playStep(this.step, this.nextTime, stepDur);
+        // свинг: каждая вторая восьмая чуть запаздывает
+        const t = this.step % 2 ? this.nextTime + stepDur * 0.33 : this.nextTime;
+        this.playStep(this.step, t, stepDur);
         this.nextTime += stepDur;
-        this.step = (this.step + 1) % 64;
+        this.step = (this.step + 1) % NOIR.steps;
       }
     },
 
-    playStep(step, t, dur) {
-      const out = this.master;
-      if (step % 2 === 0) this.bass(midi(BASS[step / 2]), t, dur * 1.8, out);
-      if (step % 4 === 2) this.hat(t, 0.05, out);
-      if (step % 8 === 4) this.click(t, out);
-      if (LEAD[step]) this.lead(midi(LEAD[step]), t, dur * 3, out);
+    playStep(s, t, sd) {
+      if (s % 2 === 0) {
+        this.tone({ f: midi(NOIR.bass[s / 2]), t, len: sd * 1.9, type: 'triangle', cut: 700, vol: 0.4, a: 0.005 });
+      }
+      if (s % 8 === 0) {
+        NOIR.chords[s / 8].forEach((n) => this.tone({ f: midi(n), t, len: sd * 7, vol: 0.035, a: 0.02 }));
+      }
+      this.brush(t, s % 2 ? 0.12 : 0.25, s % 2 ? 0.025 : 0.04, 'highpass', 6000); // райд
+      if (s % 4 === 2) this.brush(t, 0.18, 0.05, 'bandpass', 2500);              // щётка на 2 и 4
+      const note = NOIR.horn[s];
+      if (note) {
+        this.tone({
+          f: midi(note), t, len: sd * (NOIR.horn[s + 1] ? 1 : 2.5),
+          type: 'sawtooth', cut: 1300, vol: 0.07, vib: 0.008, a: 0.04
+        });
+      }
     },
 
-    bass(freq, t, len, out) {
+    tone({ f, t, len, type = 'sine', vol = 0.2, a = 0.01, cut = 0, vib = 0 }) {
       const osc = audioCtx.createOscillator();
-      const filter = audioCtx.createBiquadFilter();
       const g = audioCtx.createGain();
-      osc.type = 'sawtooth';
-      osc.frequency.value = freq;
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(900, t);
-      filter.frequency.exponentialRampToValueAtTime(220, t + len);
+      osc.type = type;
+      osc.frequency.value = f;
+      let node = osc;
+      if (cut) {
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = cut;
+        osc.connect(filter);
+        node = filter;
+      }
+      if (vib) {
+        const lfo = audioCtx.createOscillator();
+        const depth = audioCtx.createGain();
+        lfo.frequency.value = 5.5;
+        depth.gain.value = f * vib;
+        lfo.connect(depth).connect(osc.frequency);
+        lfo.start(t);
+        lfo.stop(t + len + 0.05);
+      }
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.32, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(vol, t + a);
       g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-      osc.connect(filter).connect(g).connect(out);
+      node.connect(g).connect(this.master);
       osc.start(t);
       osc.stop(t + len + 0.05);
     },
 
-    hat(t, vol, out) {
+    brush(t, len, vol, type, freq) {
       const src = audioCtx.createBufferSource();
       const filter = audioCtx.createBiquadFilter();
       const g = audioCtx.createGain();
       src.buffer = this.noise;
-      filter.type = 'highpass';
-      filter.frequency.value = 7000;
-      g.gain.setValueAtTime(vol, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
-      src.connect(filter).connect(g).connect(out);
-      src.start(t);
-      src.stop(t + 0.06);
-    },
-
-    click(t, out) {
-      const osc = audioCtx.createOscillator();
-      const g = audioCtx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(1800, t);
-      osc.frequency.exponentialRampToValueAtTime(600, t + 0.03);
-      g.gain.setValueAtTime(0.12, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
-      osc.connect(g).connect(out);
-      osc.start(t);
-      osc.stop(t + 0.05);
-    },
-
-    lead(freq, t, len, out) {
-      const osc = audioCtx.createOscillator();
-      const vib = audioCtx.createOscillator();
-      const vibGain = audioCtx.createGain();
-      const g = audioCtx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.value = freq;
-      vib.frequency.value = 5.5;
-      vibGain.gain.value = freq * 0.006;
-      vib.connect(vibGain).connect(osc.frequency);
+      filter.type = type;
+      filter.frequency.value = freq;
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.exponentialRampToValueAtTime(0.13, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(vol, t + 0.002);
       g.gain.exponentialRampToValueAtTime(0.0001, t + len);
-      osc.connect(g).connect(out);
-      osc.start(t);
-      vib.start(t);
-      osc.stop(t + len + 0.05);
-      vib.stop(t + len + 0.05);
+      src.connect(filter).connect(g).connect(this.master);
+      src.start(t);
+      src.stop(t + len + 0.02);
     }
   };
 
