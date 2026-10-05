@@ -1,5 +1,5 @@
 // Service worker «Шпиона»: кэширует всю игру, стратегия cache-first.
-const CACHE_VERSION = 'shpion-v2';
+const CACHE_VERSION = 'shpion-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -14,7 +14,8 @@ const ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_VERSION)
-      .then((cache) => cache.addAll(ASSETS))
+      // cache: 'reload' — берём свежие файлы с сервера, а не из HTTP-кэша браузера
+      .then((cache) => cache.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });

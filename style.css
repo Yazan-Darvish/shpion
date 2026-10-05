@@ -244,6 +244,37 @@ html:has(.screen--fit), html:has(.screen--fit) body { overflow: hidden; overscro
 
 .section-title { margin: 6px 0 -8px; }
 
+/* Темы локаций */
+.themes { display: flex; flex-direction: column; gap: 8px; }
+.themes .section-title { margin: 6px 0 2px; }
+.theme-all, .theme-chip {
+  position: relative;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%;
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface);
+  text-align: left;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s, transform 0.08s;
+}
+.theme-all:active, .theme-chip:active { transform: scale(0.98); }
+.theme-all { min-height: 72px; padding: 12px 18px; border-radius: 18px; }
+.theme-all__title { white-space: nowrap; font-family: var(--font-display); font-size: 26px; font-weight: 700; line-height: 1.1; }
+.theme-all__count { flex-shrink: 0; line-height: 1.5; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); text-align: right; }
+.theme-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.theme-chip { min-height: 56px; padding: 8px 12px; border-radius: 14px; font-size: 15px; font-weight: 600; line-height: 1.2; }
+.theme-chip__name { overflow-wrap: anywhere; }
+.theme-chip__count { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.theme-chip--adult .theme-chip__name { color: var(--accent-text); font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.06em; }
+
+.theme-all[aria-pressed="true"], .theme-chip[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.theme-all[aria-pressed="true"] .theme-all__count,
+.theme-chip[aria-pressed="true"] .theme-chip__count { color: var(--bg); opacity: 0.75; }
+.theme-chip--adult[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+.theme-chip--adult[aria-pressed="true"] .theme-chip__name { color: var(--accent-ink); }
+.theme-all[aria-pressed="true"] .theme-all__title::before,
+.theme-chip[aria-pressed="true"] .theme-chip__name::before { content: "✓ "; }
+.theme-note { margin: 0; font-size: 14px; color: var(--muted); }
+
 .names { display: flex; flex-direction: column; gap: 8px; }
 .name-field {
   display: flex; align-items: center; gap: 10px;

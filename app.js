@@ -2,6 +2,8 @@
   'use strict';
 
   const LOCATIONS = Array.isArray(window.LOCATIONS) ? window.LOCATIONS : [];
+  const THEMES = Array.isArray(window.LOCATION_THEMES) ? window.LOCATION_THEMES : [];
+  const ADULT_THEMES = new Set(THEMES.filter((t) => t.adult).map((t) => t.id));
   const STORE_KEY = 'shpion.v1';
   const MIN_PLAYERS = 3;
   const MAX_PLAYERS = 12;
@@ -40,7 +42,9 @@
     names: Array.isArray(saved.names)
       ? saved.names.slice(0, MAX_PLAYERS).map((n) => String(n == null ? '' : n).slice(0, NAME_MAX))
       : [],
-    music: saved.music !== false
+    music: saved.music !== false,
+    // Пустой список — «Все локации» (без тем 18+)
+    themes: Array.isArray(saved.themes) ? THEMES.filter((t) => saved.themes.includes(t.id)).map((t) => t.id) : []
   };
   let lastLocation = typeof saved.lastLocation === 'string' ? saved.lastLocation : null;
   normalizeSpies();
@@ -56,8 +60,28 @@
       minutes: settings.minutes,
       names: settings.names,
       music: settings.music,
+      themes: settings.themes,
       lastLocation
     });
+  }
+
+  function locationPool(themes = settings.themes) {
+    const themesOf = (l) => (Array.isArray(l.themes) ? l.themes : []);
+    // Локации 18+ попадают в игру, только если тема 18+ выбрана явно
+    const adultOn = themes.some((id) => ADULT_THEMES.has(id));
+    return LOCATIONS.filter((l) => {
+      const ts = themesOf(l);
+      if (!adultOn && ts.some((id) => ADULT_THEMES.has(id))) return false;
+      return !themes.length || ts.some((id) => themes.includes(id));
+    });
+  }
+
+  function pluralLocations(n) {
+    const m10 = n % 10;
+    const m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return `${n} локация`;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return `${n} локации`;
+    return `${n} локаций`;
   }
 
   function playerName(i) {
@@ -159,7 +183,8 @@
 
   function deal() {
     const n = settings.players;
-    const pool = LOCATIONS.length > 1 ? LOCATIONS.filter((l) => l.name !== lastLocation) : LOCATIONS;
+    const all = locationPool();
+    const pool = all.length > 1 ? all.filter((l) => l.name !== lastLocation) : all;
     const location = pool[randInt(pool.length)];
     lastLocation = location.name;
     persist();
@@ -175,6 +200,7 @@
 
     game = {
       location: location.name,
+      pool: all.map((l) => l.name).sort((a, b) => a.localeCompare(b, 'ru')),
       players,
       index: 0,
       firstAsker: players[randInt(n)].name,
@@ -256,8 +282,44 @@
       persist();
     }));
 
+    // Темы локаций: большая кнопка «Все локации» и темы с мультивыбором
+    const themeAll = h('button', { type: 'button', class: 'theme-all' },
+      h('span', { class: 'theme-all__title', text: 'Все локации' }),
+      h('span', { class: 'theme-all__count' },
+        pluralLocations(locationPool([]).length),
+        ADULT_THEMES.size ? [h('br'), 'без 18+'] : null)
+    );
+    themeAll.addEventListener('click', () => {
+      settings.themes = [];
+      syncThemes();
+      persist();
+    });
+    const themeChips = THEMES.map((t) => {
+      const chip = h('button', { type: 'button', class: t.adult ? 'theme-chip theme-chip--adult' : 'theme-chip' },
+        h('span', { class: 'theme-chip__name', text: t.name }),
+        h('span', { class: 'theme-chip__count', text: locationPool([t.id]).length })
+      );
+      chip.addEventListener('click', () => {
+        const selected = new Set(settings.themes);
+        if (selected.has(t.id)) selected.delete(t.id); else selected.add(t.id);
+        settings.themes = THEMES.filter((x) => selected.has(x.id)).map((x) => x.id);
+        syncThemes();
+        persist();
+      });
+      return { id: t.id, chip };
+    });
+    const poolNote = h('p', { class: 'theme-note', 'aria-live': 'polite' });
+    const syncThemes = () => {
+      themeAll.setAttribute('aria-pressed', String(settings.themes.length === 0));
+      themeChips.forEach(({ id, chip }) => chip.setAttribute('aria-pressed', String(settings.themes.includes(id))));
+      poolNote.textContent = settings.themes.length
+        ? `В игре ${pluralLocations(locationPool().length)}`
+        : 'Можно выбрать одну тему или несколько';
+    };
+
     fillNames();
     syncSpies();
+    syncThemes();
 
     const body = [
       h('header', { class: 'masthead' },
@@ -266,6 +328,12 @@
         h('h1', { class: 'masthead__title', text: 'Шпион' }),
         h('span', { class: 'stamp', 'aria-hidden': 'true' }, 'Совершенно', h('br'), 'секретно'),
         h('p', { class: 'masthead__lead', text: 'Все знают, где вы. Кроме одного. Найдите его, пока он не догадался.' })
+      ),
+      h('section', { class: 'themes', 'aria-label': 'Темы локаций' },
+        h('h2', { class: 'kicker section-title', text: 'Темы локаций' }),
+        themeAll,
+        h('div', { class: 'theme-grid' }, themeChips.map((c) => c.chip)),
+        poolNote
       ),
       h('div', { class: 'panel' },
         stepper('Игроков', null, () => settings.players, MIN_PLAYERS, MAX_PLAYERS, (v) => {
@@ -699,7 +767,7 @@
     const status = h('div', { class: 'timer-status', 'aria-live': 'polite' });
     const box = h('div', { class: 'timer-box' }, time, status);
 
-    const sorted = LOCATIONS.map((l) => l.name).sort((a, b) => a.localeCompare(b, 'ru'));
+    const sorted = game.pool;
     // Алфавит идёт сверху вниз по первой колонке, затем по второй
     const list = h('ul', { class: 'loc-list', style: `grid-template-rows: repeat(${Math.ceil(sorted.length / 2)}, auto)` }, sorted.map((name) => {
       const btn = h('button', {
